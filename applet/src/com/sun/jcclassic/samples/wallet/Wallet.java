@@ -29,14 +29,17 @@ public class Wallet extends Applet {
     final static byte VERIFY = (byte) 0x20;
     final static byte CREDIT = (byte) 0x30;
     final static byte DEBIT = (byte) 0x40;
+    
     final static byte GET_BALANCE = (byte) 0x50;
+    final static byte GET_POINTS_BALANCE = (byte) 0x55;
+    
     final static byte  UPDATE_PIN = (byte) 0x70;
 
     // maximum balance
-    final static short MAX_BALANCE = 0x7FFF;
+    final static short MAX_BALANCE = 0x2710;//10 000 // 0x7FFF
     // maximum transaction amount
     //final static byte MAX_TRANSACTION_AMOUNT = 127;
-    final static short MAX_TRANSACTION_AMOUNT = 0x258;
+    final static short MAX_TRANSACTION_AMOUNT = 0x3E8;//1000 // 0x258
 
     // maximum number of incorrect tries before the
     // PIN is blocked
@@ -57,11 +60,16 @@ public class Wallet extends Applet {
     final static short SW_EXCEED_MAXIMUM_BALANCE = 0x6A84;
     // signal the the balance becomes negative
     final static short SW_NEGATIVE_BALANCE = 0x6A85;
+    // signal the the points balance becomes negative
+    final static short SW_NEGATIVE_POINTS_BALANCE = 0x6A87;
+    final static short SW_NEGATIVE_POINTS_AND_MONEY_BALANCE = 0x6A88;
 
     /* instance variables declaration */
     OwnerPIN pin;
     short balance;
-
+    short points;
+    byte IS_VALIDATED;
+    
     private Wallet(byte[] bArray, short bOffset, byte bLength) {
 
         // It is good programming practice to allocate
@@ -143,9 +151,13 @@ public class Wallet extends Applet {
             case GET_BALANCE:
                 getBalance(apdu);
                 return;
+            case GET_POINTS_BALANCE:
+            	getPointsBalance(apdu);
+            	return; 
             case DEBIT:
                 debit(apdu);
                 return;
+            
             case CREDIT:
                 credit(apdu);
                 return;
@@ -206,7 +218,9 @@ public class Wallet extends Applet {
 
         // credit the amount
         balance = (short) (balance + creditAmount);
-
+        
+      //pin.reset();
+        
     } // end of deposit method
 
     private void debit(APDU apdu) {
@@ -219,15 +233,18 @@ public class Wallet extends Applet {
         byte[] buffer = apdu.getBuffer();
 
         byte numBytes = (buffer[ISO7816.OFFSET_LC]);
-
-        byte byteRead = (byte) (apdu.setIncomingAndReceive());
-
-        if ((numBytes != 1) || (byteRead != 1)) {
+        
+        byte byteRead = (byte) (apdu.setIncomingAndReceive());// numaru de bytes pana la sf comenzii
+    switch(buffer[ISO7816.OFFSET_P1]){
+    case 0:// only money
+ 
+        if ((numBytes != 2) || (byteRead != 2)) {
             ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
         }
-
-        // get debit amount
-        byte debitAmount = buffer[ISO7816.OFFSET_CDATA];
+        
+        byte debitAmount1 = buffer[ISO7816.OFFSET_CDATA];
+        byte debitAmount2 = buffer[ISO7816.OFFSET_CDATA+1];
+        short debitAmount = (short)((short) debitAmount1 * 256 | (short) debitAmount2 );
 
         // check debit amount
         if ((debitAmount > MAX_TRANSACTION_AMOUNT) || (debitAmount < 0)) {
@@ -235,11 +252,94 @@ public class Wallet extends Applet {
         }
 
         // check the new balance
-        if ((short) (balance - debitAmount) < (short) 0) {
+        if ((short) (balance - debitAmount) < (short) 0) { 
             ISOException.throwIt(SW_NEGATIVE_BALANCE);
         }
 
         balance = (short) (balance - debitAmount);
+    	points = (short) (debitAmount/10 + points);
+        return;
+    	
+    case 1: // only points
+    	
+
+        if ((numBytes != 2) || (byteRead != 2)) {
+            ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+        }
+        
+        byte pointAmount1 = buffer[ISO7816.OFFSET_CDATA];
+        byte pointAmount2 = buffer[ISO7816.OFFSET_CDATA+1];
+        short pointAmount = (short)((short) pointAmount1 * 256 | (short) pointAmount2 );;
+
+        // check debit amount
+        if ((pointAmount > MAX_TRANSACTION_AMOUNT) || (pointAmount < 0)) {
+            ISOException.throwIt(SW_INVALID_TRANSACTION_AMOUNT);
+        }
+
+        // check the new balance
+        if ((short) (points - pointAmount) < (short) 0) {
+            ISOException.throwIt(SW_NEGATIVE_POINTS_BALANCE);
+        }
+
+        points = (short) (points - pointAmount);
+    	//points = (short) (debitAmount/10 + points);
+        return;
+    	
+    	
+    	
+    case 2: // both
+    	
+        if ((numBytes != 4) || (byteRead != 4)) {
+            ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+        }
+        
+        debitAmount1 = buffer[ISO7816.OFFSET_CDATA];
+        debitAmount2 = buffer[ISO7816.OFFSET_CDATA+1];
+        debitAmount = (short)((short) debitAmount1 * 256 | (short) debitAmount2 );
+        
+        pointAmount1 = buffer[ISO7816.OFFSET_CDATA+2];
+        pointAmount2 = buffer[ISO7816.OFFSET_CDATA+3];
+        pointAmount = (short)((short) pointAmount1 * 256 | (short) pointAmount2 );
+        
+        
+        
+        // check debit amount
+        if ((debitAmount > MAX_TRANSACTION_AMOUNT) || (debitAmount < 0)) {
+            ISOException.throwIt(SW_INVALID_TRANSACTION_AMOUNT);
+        }
+     // check debit amount
+        if ((pointAmount > MAX_TRANSACTION_AMOUNT) || (pointAmount < 0)) {
+            ISOException.throwIt(SW_INVALID_TRANSACTION_AMOUNT);
+        }
+        
+     // check the money balance // check the points balance
+        
+        //bani insuf si puncte insuf
+        if ((short) (balance - debitAmount) < (short) 0 && (short) (points - pointAmount) < (short) 0 )
+        {
+            ISOException.throwIt(SW_NEGATIVE_POINTS_AND_MONEY_BALANCE);
+        }
+        	
+        // check the money balance
+        if ((short) (balance - debitAmount) < (short) 0) {
+            ISOException.throwIt(SW_NEGATIVE_BALANCE);
+        }
+        
+        // check the points balance
+        if ((short) (points - pointAmount) < (short) 0) {
+            ISOException.throwIt(SW_NEGATIVE_POINTS_BALANCE);
+        }
+        
+      
+        
+        balance = (short) (balance - debitAmount);
+        points = (short) (points - pointAmount);
+        points = (short) (debitAmount/10 + points);
+        return;
+      
+    }
+
+    //pin.reset();
 
     } // end of debit method
 
@@ -272,6 +372,34 @@ public class Wallet extends Applet {
 
     } // end of getBalance method
 
+    private void getPointsBalance(APDU apdu) {
+    	byte[] buffer = apdu.getBuffer();
+
+        // inform system that the applet has finished
+        // processing the command and the system should
+        // now prepare to construct a response APDU
+        // which contains data field
+        short le = apdu.setOutgoing();
+
+        if (le < 2) {
+            ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+        }
+
+        // informs the CAD the actual number of bytes
+        // returned
+        apdu.setOutgoingLength((byte) 2);
+
+        // move the balance data into the APDU buffer
+        // starting at the offset 0
+        buffer[0] = (byte) (points >> 8);
+        buffer[1] = (byte) (points & 0xFF);
+
+        // send the 2-byte balance at the offset
+        // 0 in the apdu buffer
+        apdu.sendBytes((short) 0, (short) 2);
+
+     // end of getPointsBalance method
+    }
     private void verify(APDU apdu) {
 
         byte[] buffer = apdu.getBuffer();
